@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+#-------------------------------------------------------------------------------------------------------------
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License. See https://go.microsoft.com/fwlink/?linkid=2090316 for license information.
+#-------------------------------------------------------------------------------------------------------------
+#
+# Docs: https://github.com/microsoft/vscode-dev-containers/blob/main/script-library/docs/awscli.md
+# Maintainer: The VS Code and Codespaces Teams
+
+set -e
+
+# Clean up
+rm -rf /var/lib/apt/lists/*
+
+VERSION=${VERSION:-"latest"}
+VERBOSE=${VERBOSE:-"true"}
+
+AWSCLI_GPG_KEY=FB5DB77FD5C118B80511ADA8A6310ACC4672475C
+AWSCLI_GPG_KEY_MATERIAL="-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBF2Cr7UBEADJZHcgusOJl7ENSyumXh85z0TRV0xJorM2B/JL0kHOyigQluUG
+ZMLhENaG0bYatdrKP+3H91lvK050pXwnO/R7fB/FSTouki4ciIx5OuLlnJZIxSzx
+PqGl0mkxImLNbGWoi6Lto0LYxqHN2iQtzlwTVmq9733zd3XfcXrZ3+LblHAgEt5G
+TfNxEKJ8soPLyWmwDH6HWCnjZ/aIQRBTIQ05uVeEoYxSh6wOai7ss/KveoSNBbYz
+gbdzoqI2Y8cgH2nbfgp3DSasaLZEdCSsIsK1u05CinE7k2qZ7KgKAUIcT/cR/grk
+C6VwsnDU0OUCideXcQ8WeHutqvgZH1JgKDbznoIzeQHJD238GEu+eKhRHcz8/jeG
+94zkcgJOz3KbZGYMiTh277Fvj9zzvZsbMBCedV1BTg3TqgvdX4bdkhf5cH+7NtWO
+lrFj6UwAsGukBTAOxC0l/dnSmZhJ7Z1KmEWilro/gOrjtOxqRQutlIqG22TaqoPG
+fYVN+en3Zwbt97kcgZDwqbuykNt64oZWc4XKCa3mprEGC3IbJTBFqglXmZ7l9ywG
+EEUJYOlb2XrSuPWml39beWdKM8kzr1OjnlOm6+lpTRCBfo0wa9F8YZRhHPAkwKkX
+XDeOGpWRj4ohOx0d2GWkyV5xyN14p2tQOCdOODmz80yUTgRpPVQUtOEhXQARAQAB
+tCFBV1MgQ0xJIFRlYW0gPGF3cy1jbGlAYW1hem9uLmNvbT6JAlQEEwEIAD4WIQT7
+Xbd/1cEYuAURraimMQrMRnJHXAUCXYKvtQIbAwUJB4TOAAULCQgHAgYVCgkICwIE
+FgIDAQIeAQIXgAAKCRCmMQrMRnJHXJIXEAChLUIkg80uPUkGjE3jejvQSA1aWuAM
+yzy6fdpdlRUz6M6nmsUhOExjVIvibEJpzK5mhuSZ4lb0vJ2ZUPgCv4zs2nBd7BGJ
+MxKiWgBReGvTdqZ0SzyYH4PYCJSE732x/Fw9hfnh1dMTXNcrQXzwOmmFNNegG0Ox
+au+VnpcR5Kz3smiTrIwZbRudo1ijhCYPQ7t5CMp9kjC6bObvy1hSIg2xNbMAN/Do
+ikebAl36uA6Y/Uczjj3GxZW4ZWeFirMidKbtqvUz2y0UFszobjiBSqZZHCreC34B
+hw9bFNpuWC/0SrXgohdsc6vK50pDGdV5kM2qo9tMQ/izsAwTh/d/GzZv8H4lV9eO
+tEis+EpR497PaxKKh9tJf0N6Q1YLRHof5xePZtOIlS3gfvsH5hXA3HJ9yIxb8T0H
+QYmVr3aIUes20i6meI3fuV36VFupwfrTKaL7VXnsrK2fq5cRvyJLNzXucg0WAjPF
+RrAGLzY7nP1xeg1a0aeP+pdsqjqlPJom8OCWc1+6DWbg0jsC74WoesAqgBItODMB
+rsal1y/q+bPzpsnWjzHV8+1/EtZmSc8ZUGSJOPkfC7hObnfkl18h+1QtKTjZme4d
+H17gsBJr+opwJw/Zio2LMjQBOqlm3K1A4zFTh7wBC7He6KPQea1p2XAMgtvATtNe
+YLZATHZKTJyiqA==
+=vYOk
+-----END PGP PUBLIC KEY BLOCK-----"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo -e 'Script must be run as root. Use sudo, su, or add "USER root" to your Dockerfile before running this script.'
+    exit 1
+fi
+
+
+# Debian / Ubuntu packages
+install_debian_packages() {
+    # Ensure apt is in non-interactive to avoid prompts
+    export DEBIAN_FRONTEND=noninteractive
+
+    local package_list=""
+    package_list="${package_list} curl ca-certificates gpg dirmngr unzip bash-completion less"
+
+    if [ "${INSTALL_SSL}" = "true" ]; then
+        # Include libssl1.1 if available
+        if [[ ! -z $(apt-cache --names-only search ^libssl1.1$) ]]; then
+            package_list="${package_list} libssl1.1"
+        fi
+
+        # Include libssl3 if available
+        if [[ ! -z $(apt-cache --names-only search ^libssl3$) ]]; then
+            package_list="${package_list} libssl3"
+        fi
+
+        # Include appropriate version of libssl1.0.x if available
+        local libssl_package=$(dpkg-query -f '${db:Status-Abbrev}\t${binary:Package}\n' -W 'libssl1\.0\.?' 2>&1 || echo '')
+        if [ "$(echo "$libssl_package" | grep -o 'libssl1\.0\.[0-9]:' | uniq | sort | wc -l)" -eq 0 ]; then
+            if [[ ! -z $(apt-cache --names-only search ^libssl1.0.2$) ]]; then
+                # Debian 9
+                package_list="${package_list} libssl1.0.2"
+            elif [[ ! -z $(apt-cache --names-only search ^libssl1.0.0$) ]]; then
+                # Ubuntu 18.04
+                package_list="${package_list} libssl1.0.0"
+            fi
+        fi
+    fi
+
+    # Include git if not already installed (may be more recent than distro version)
+    if ! type git > /dev/null 2>&1; then
+        package_list="${package_list} git"
+    fi
+
+    # Needed for adding manpages-posix and manpages-posix-dev which are non-free packages in Debian
+    if [ "${ADD_NON_FREE_PACKAGES}" = "true" ]; then
+        if [[ ! -e "/etc/apt/sources.list" ]] && [[ -e "/etc/apt/sources.list.d/debian.sources" ]]; then 
+            sed -i '/^URIs: http:\/\/deb.debian.org\/debian$/ { N; N; s/Components: main/Components: main non-free non-free-firmware/ }' /etc/apt/sources.list.d/debian.sources
+        else
+            # Bring in variables from /etc/os-release like VERSION_CODENAME
+            sed -i -E "s/deb http:\/\/(deb|httpredir)\.debian\.org\/debian ${VERSION_CODENAME} main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME} main contrib non-free/" /etc/apt/sources.list
+            sed -i -E "s/deb-src http:\/\/(deb|httredir)\.debian\.org\/debian ${VERSION_CODENAME} main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME} main contrib non-free/" /etc/apt/sources.list
+            sed -i -E "s/deb http:\/\/(deb|httpredir)\.debian\.org\/debian ${VERSION_CODENAME}-updates main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME}-updates main contrib non-free/" /etc/apt/sources.list
+            sed -i -E "s/deb-src http:\/\/(deb|httpredir)\.debian\.org\/debian ${VERSION_CODENAME}-updates main/deb http:\/\/\1\.debian\.org\/debian ${VERSION_CODENAME}-updates main contrib non-free/" /etc/apt/sources.list
+            sed -i "s/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main contrib non-free/" /etc/apt/sources.list
+            sed -i "s/deb-src http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}\/updates main contrib non-free/" /etc/apt/sources.list
+            sed -i "s/deb http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main/deb http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main contrib non-free/" /etc/apt/sources.list
+            sed -i "s/deb-src http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main/deb http:\/\/deb\.debian\.org\/debian ${VERSION_CODENAME}-backports main contrib non-free/" /etc/apt/sources.list
+            # Handle bullseye location for security https://www.debian.org/releases/bullseye/amd64/release-notes/ch-information.en.html
+            sed -i "s/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main contrib non-free/" /etc/apt/sources.list
+            sed -i "s/deb-src http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main/deb http:\/\/security\.debian\.org\/debian-security ${VERSION_CODENAME}-security main contrib non-free/" /etc/apt/sources.list
+        fi;
+        echo "Running apt-get update..."
+        package_list="${package_list} manpages-posix manpages-posix-dev"
+    fi
+
+    local missing_package_list=""
+    local packages=()
+    read -r -a packages <<< "${package_list}"
+    for package in "${packages[@]}"; do
+        if ! dpkg-query -W -f='${db:Status-Abbrev}\n' "${package}" 2>/dev/null | grep -q '^ii'; then
+            missing_package_list="${missing_package_list} ${package}"
+        fi
+    done
+
+    # Install the list of missing packages
+    if [ -n "${missing_package_list}" ]; then
+        echo "Packages to verify are installed: ${missing_package_list}"
+        rm -rf /var/lib/apt/lists/*
+        apt-get update -y
+        apt-get -y install --no-install-recommends ${missing_package_list} 2> >( grep -v 'debconf: delaying package configuration, since apt-utils is not installed' >&2 )
+    fi
+
+    # Install zsh (and recommended packages) if needed
+    if [ "${INSTALL_ZSH}" = "true" ] && ! type zsh > /dev/null 2>&1; then
+        apt-get install -y zsh
+    fi
+
+    # Get to latest versions of all packages
+    if [ "${UPGRADE_PACKAGES}" = "true" ]; then
+        apt-get -y upgrade --no-install-recommends
+        apt-get autoremove -y
+    fi
+
+    # Ensure at least the en_US.UTF-8 UTF-8 locale is available = common need for both applications and things like the agnoster ZSH theme.
+    if [ "${LOCALE_ALREADY_SET}" != "true" ] && ! grep -o -E '^\s*en_US.UTF-8\s+UTF-8' /etc/locale.gen > /dev/null; then
+        echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+        locale-gen
+        LOCALE_ALREADY_SET="true"
+    fi
+
+    # Clean up
+    apt-get -y clean
+    rm -rf /var/lib/apt/lists/*
+}
+
+# RedHat / RockyLinux / CentOS / Fedora packages
+install_redhat_packages() {
+    local package_list=""
+    local remove_epel="false"
+    local install_cmd=microdnf
+    if type microdnf > /dev/null 2>&1; then
+       install_cmd=microdnf
+    elif type tdnf > /dev/null 2>&1; then
+       install_cmd=tdnf
+    elif type dnf > /dev/null 2>&1; then
+       install_cmd=dnf
+    elif type yum > /dev/null 2>&1; then
+       install_cmd=yum
+    else
+       echo "Unable to find 'tdnf', 'dnf', or 'yum' package manager. Exiting."
+       exit 1
+    fi
+    
+    package_list="${package_list} curl ca-certificates gpg dirmngr unzip bash-completion less"
+    
+    # Install bubblewrap if available (not present in UBI repositories)
+    if ${install_cmd} -q list bubblewrap >/dev/null 2>&1; then
+        package_list="${package_list} bubblewrap"
+    fi
+
+    # rockylinux:9 installs 'curl-minimal' which clashes with 'curl'
+    # Install 'curl' for every OS except this rockylinux:9
+    if [[ "${ID}" = "rocky" ]] && [[ "${VERSION}" != *"9."* ]]; then
+        package_list="${package_list} curl"
+    fi
+
+    # Install OpenSSL 1.0 compat if needed
+    if ${install_cmd} -q list compat-openssl10 >/dev/null 2>&1; then
+        package_list="${package_list} compat-openssl10"
+    fi
+
+    # Install lsb_release if available
+    if ${install_cmd} -q list redhat-lsb-core >/dev/null 2>&1; then
+        package_list="${package_list} redhat-lsb-core"
+    fi
+
+    # Install git if not already installed (may be more recent than distro version)
+    if ! type git > /dev/null 2>&1; then
+        package_list="${package_list} git"
+    fi
+
+    # Install EPEL repository if needed (required to install 'jq' for CentOS)
+    if [[ "${ID}" = "centos" ]] && ! rpm -q jq >/dev/null 2>&1; then
+        ${install_cmd} -y install epel-release
+        remove_epel="true"
+    fi
+
+    # Install zsh if needed
+    if [ "${INSTALL_ZSH}" = "true" ] && ! type zsh > /dev/null 2>&1; then
+        package_list="${package_list} zsh"
+    fi
+
+    local missing_package_list=""
+    local packages=()
+    read -r -a packages <<< "${package_list}"
+    for package in "${packages[@]}"; do
+        if ! rpm -q "${package}" >/dev/null 2>&1; then
+            missing_package_list="${missing_package_list} ${package}"
+        fi
+    done
+
+    if [ -n "${missing_package_list}" ]; then
+        echo "Packages to verify are installed: ${missing_package_list}"
+        echo "Running ${install_cmd} install..."
+        if [ "${install_cmd}" = "dnf" ]; then
+            ${install_cmd} -y install --allowerasing ${missing_package_list}
+        else
+            ${install_cmd} -y install ${missing_package_list}
+        fi
+    fi
+
+    # Get to latest versions of all packages
+    if [ "${UPGRADE_PACKAGES}" = "true" ]; then
+        echo "Running ${install_cmd} upgrade..."
+        ${install_cmd} upgrade -y
+    fi
+
+    if [[ "${remove_epel}" = "true" ]]; then
+        ${install_cmd} -y remove epel-release
+    fi
+}
+
+# Alpine Linux packages
+install_alpine_packages() {
+    apk update
+    local package_list=""
+
+    package_list="${package_list} curl ca-certificates gnupg unzip bash-completion less"
+
+    # # Include libssl1.1 if available (not available for 3.19 and newer)
+    LIBSSL1_PKG=libssl1.1
+    if [[ $(apk search --no-cache -a $LIBSSL1_PKG | grep $LIBSSL1_PKG) ]]; then
+        package_list="${package_list} $LIBSSL1_PKG"
+    fi
+
+    # Install man pages - package name varies between 3.12 and earlier versions
+    if apk info man > /dev/null 2>&1; then
+        package_list="${package_list} man man-pages"
+    else
+        package_list="${package_list} mandoc man-pages"
+    fi
+
+    # Install git if not already installed (may be more recent than distro version)
+    if ! type git > /dev/null 2>&1; then
+        package_list="${package_list} git"
+    fi
+
+    # Install zsh if needed
+    if [ "${INSTALL_ZSH}" = "true" ] && ! type zsh > /dev/null 2>&1; then
+        package_list="${package_list} zsh"
+    fi
+
+    local missing_package_list=""
+    local packages=()
+    read -r -a packages <<< "${package_list}"
+    for package in "${packages[@]}"; do
+        if ! apk info -e "${package}" >/dev/null 2>&1; then
+            missing_package_list="${missing_package_list} ${package}"
+        fi
+    done
+    if [ -n "${missing_package_list}" ]; then
+        apk add --no-cache ${missing_package_list}
+    fi
+}
+
+
+# Checks if packages are installed and installs them if not
+check_packages() {
+    if ! command -v dpkg &> /dev/null; then return; fi # system doesn't have dpkg. YOLO mode. we still have `set -e`
+    if ! dpkg -s "$@" > /dev/null 2>&1; then
+        apt_get_update
+        apt-get -y install --no-install-recommends "$@"
+    fi
+}
+
+export DEBIAN_FRONTEND=noninteractive
+
+check_packages curl ca-certificates gpg dirmngr unzip bash-completion less
+
+verify_aws_cli_gpg_signature() {
+    local filePath=$1
+    local sigFilePath=$2
+    local awsGpgKeyring=aws-cli-public-key.gpg
+
+    echo "${AWSCLI_GPG_KEY_MATERIAL}" | gpg --dearmor > "./${awsGpgKeyring}"
+    gpg --batch --quiet --no-default-keyring --keyring "./${awsGpgKeyring}" --verify "${sigFilePath}" "${filePath}"
+    local status=$?
+
+    rm "./${awsGpgKeyring}"
+
+    return ${status}
+}
+
+install() {
+    local scriptZipFile=awscli.zip
+    local scriptSigFile=awscli.sig
+
+    # See Linux install docs at https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+    if [ "${VERSION}" != "latest" ]; then
+        local versionStr=-${VERSION}
+    fi
+    architecture=$(dpkg --print-architecture)
+    case "${architecture}" in
+        amd64) architectureStr=x86_64 ;;
+        arm64) architectureStr=aarch64 ;;
+        *)
+            echo "AWS CLI does not support machine architecture '$architecture'. Please use an x86-64 or ARM64 machine."
+            exit 1
+    esac
+    local scriptUrl=https://awscli.amazonaws.com/awscli-exe-linux-${architectureStr}${versionStr}.zip
+    curl "${scriptUrl}" -o "${scriptZipFile}"
+    curl "${scriptUrl}.sig" -o "${scriptSigFile}"
+
+    verify_aws_cli_gpg_signature "$scriptZipFile" "$scriptSigFile"
+    if (( $? > 0 )); then
+        echo "Could not verify GPG signature of AWS CLI install script. Make sure you provided a valid version."
+        exit 1
+    fi
+
+    if [ "${VERBOSE}" = "false" ]; then
+        unzip -q "${scriptZipFile}"
+    else
+        unzip "${scriptZipFile}"
+    fi
+    
+    ./aws/install
+
+    # AWS bash completion
+    mkdir -p /etc/bash_completion.d
+    cp ./scripts/vendor/aws_bash_completer /etc/bash_completion.d/aws
+
+    # AWS zsh completion
+    mkdir -p /usr/local/share/zsh/site-functions/
+    cp ./scripts/vendor/aws_zsh_completer.sh /usr/local/share/zsh/site-functions/_aws
+    sed -i '1s/^/#compdef aws\n/' /usr/local/share/zsh/site-functions/_aws
+
+    rm -rf ./aws
+}
+
+echo "(*) Installing AWS CLI..."
+
+install
+
+# Clean up
+rm -rf /var/lib/apt/lists/*
+
+echo "Done!"

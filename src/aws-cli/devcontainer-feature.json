@@ -1,0 +1,39 @@
+{
+    "id": "aws-cli",
+    "version": "0.1.0",
+    "name": "AWS CLI (non-debian)",
+    "documentationURL": "https://github.com/faangbait/features/tree/main/src/aws-cli",
+    "description": "Installs the AWS CLI along with needed dependencies. Best-efforts a dnf install.",
+    "options": {
+        "version": {
+            "type": "string",
+            "proposals": [
+                "latest"
+            ],
+            "default": "latest",
+            "description": "Select or enter an AWS CLI version."
+        },
+        "verbose": {
+            "type": "boolean",
+            "default": true,
+            "description": "Suppress verbose output."
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "AmazonWebServices.aws-toolkit-vscode"
+            ],
+            "settings": {
+                "github.copilot.chat.codeGeneration.instructions": [
+                    {
+                        "text": "This dev container includes the AWS CLI along with needed dependencies pre-installed and available on the `PATH`, along with the AWS Toolkit extensions for AWS development."
+                    }
+                ]
+            }
+        }
+    },
+    "installsAfter": [
+        "ghcr.io/devcontainers/features/common-utils"
+    ]
+}
