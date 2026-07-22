@@ -281,19 +281,41 @@ install_alpine_packages() {
     fi
 }
 
+# Bring in ID, ID_LIKE, VERSION_ID, VERSION_CODENAME
+. /etc/os-release
+# Get an adjusted ID independent of distro variants
+if [ "${ID}" = "debian" ] || [ "${ID_LIKE}" = "debian" ]; then
+    ADJUSTED_ID="debian"
+elif [[ "${ID}" = "rhel" || "${ID}" = "fedora" || "${ID}" = "azurelinux" || "${ID}" = "mariner" || "${ID_LIKE}" = *"rhel"* || "${ID_LIKE}" = *"fedora"* || "${ID_LIKE}" = *"mariner"* ]]; then
+    ADJUSTED_ID="rhel"
+    VERSION_CODENAME="${ID}${VERSION_ID}"
+elif [ "${ID}" = "alpine" ]; then
+    ADJUSTED_ID="alpine"
+else
+    echo "Linux distro ${ID} not supported."
+    exit 1
+fi
 
-# Checks if packages are installed and installs them if not
-check_packages() {
-    if ! command -v dpkg &> /dev/null; then return; fi # system doesn't have dpkg. YOLO mode. we still have `set -e`
-    if ! dpkg -s "$@" > /dev/null 2>&1; then
-        apt_get_update
-        apt-get -y install --no-install-recommends "$@"
-    fi
-}
+if [ "${ADJUSTED_ID}" = "rhel" ] && [ "${VERSION_CODENAME-}" = "centos7" ]; then
+    # As of 1 July 2024, mirrorlist.centos.org no longer exists.
+    # Update the repo files to reference vault.centos.org.
+    sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
+    sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
+    sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
+fi
 
-export DEBIAN_FRONTEND=noninteractive
-
-check_packages curl ca-certificates gpg dirmngr unzip bash-completion less
+# Install packages for appropriate OS
+case "${ADJUSTED_ID}" in
+    "debian")
+        install_debian_packages
+        ;;
+    "rhel")
+        install_redhat_packages
+        ;;
+    "alpine")
+        install_alpine_packages
+        ;;
+esac
 
 verify_aws_cli_gpg_signature() {
     local filePath=$1
