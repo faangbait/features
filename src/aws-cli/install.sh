@@ -9,9 +9,6 @@
 
 set -e
 
-# Clean up
-rm -rf /var/lib/apt/lists/*
-
 VERSION=${VERSION:-"latest"}
 VERBOSE=${VERBOSE:-"true"}
 
